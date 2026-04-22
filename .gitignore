@@ -1,0 +1,14 @@
+.env
+*.session
+*.session-journal
+__pycache__/
+*.pyc
+*.pyo
+*.log
+bot_*.txt
+bot_*.log
+*.html
+debug*.py
+test_*.py
+next_search.json
+.claude/

@@ -1,0 +1,5 @@
+python-dotenv
+telethon
+requests
+curl_cffi
+beautifulsoup4
