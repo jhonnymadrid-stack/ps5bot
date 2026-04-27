@@ -124,14 +124,31 @@ def _en_radio_zurich(postcode_str: str) -> bool:
 # ---------------------------------------------------------------------------
 # Utilidades
 # ---------------------------------------------------------------------------
-seen_ads: set[str] = set()
+_SEEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen_ads.json")
 _next_scrape: float = 0.0
+_force_scrape: bool = False
+
+def _load_seen() -> set[str]:
+    try:
+        import json as _json
+        with open(_SEEN_FILE) as f:
+            return set(_json.load(f))
+    except Exception:
+        return set()
+
+seen_ads: set[str] = _load_seen()
 
 def ya_visto(id_anuncio: str) -> bool:
     return id_anuncio in seen_ads
 
 def marcar_visto(id_anuncio: str) -> None:
     seen_ads.add(id_anuncio)
+    try:
+        import json as _json
+        with open(_SEEN_FILE, "w") as f:
+            _json.dump(list(seen_ads), f)
+    except Exception:
+        pass
 
 def extraer_precio(texto: str) -> float | None:
     patrones = [
@@ -787,40 +804,65 @@ async def bot_polling_loop() -> None:
                     offset = update["update_id"] + 1
                     msg = update.get("message", {})
                     text = msg.get("text", "").strip()
-                    if msg.get("chat", {}).get("type") == "private" and text.startswith("/status"):
-                        restante = max(0, int(_next_scrape - datetime.now().timestamp()))
-                        mins, secs = divmod(restante, 60)
-                        await enviar_alerta(
-                            f"✅ <b>Bot PS5 activo</b>\n"
-                            f"⏱ Próximo scrape en <b>{mins}m {secs}s</b>"
-                        )
+                    if msg.get("chat", {}).get("type") == "private":
+                        if text.startswith("/help"):
+                            await enviar_alerta(
+                                "<b>Comandos disponibles</b>\n\n"
+                                "<b>/status</b>\n"
+                                "  Estado del bot y tiempo hasta el próximo scrape automático.\n\n"
+                                "<b>/scrap</b>\n"
+                                "  Lanza un scrape inmediato buscando nuevos anuncios.\n"
+                                "  Al terminar te dice cuántos artículos nuevos encontró.\n\n"
+                                "<b>/help</b>\n"
+                                "  Muestra este mensaje."
+                            )
+                        elif text.startswith("/status"):
+                            restante = max(0, int(_next_scrape - datetime.now().timestamp()))
+                            mins, secs = divmod(restante, 60)
+                            await enviar_alerta(
+                                f"✅ <b>Bot PS5 activo</b>\n"
+                                f"⏱ Próximo scrape en <b>{mins}m {secs}s</b>"
+                            )
+                        elif text.startswith("/scrap"):
+                            global _force_scrape
+                            _force_scrape = True
+                            await enviar_alerta("🔍 Scrape manual iniciado...")
             except Exception as e:
                 print(f"[Bot polling] Error: {e}")
                 await asyncio.sleep(5)
 
 
+async def run_all_scrapers() -> None:
+    for name, fn in [("Tutti", scrape_tutti), ("Anibis", scrape_anibis),
+                     ("Ricardo", scrape_ricardo), ("Facebook", scrape_facebook_marketplace)]:
+        try:
+            await fn()
+        except Exception as e:
+            print(f"Error en loop ({name}): {e}")
+
+
 async def loop_scrapers() -> None:
+    global _next_scrape, _force_scrape
     while True:
-        try:
-            await scrape_tutti()
-        except Exception as e:
-            print(f"Error en loop (Tutti): {e}")
-        try:
-            await scrape_anibis()
-        except Exception as e:
-            print(f"Error en loop (Anibis): {e}")
-        try:
-            await scrape_ricardo()
-        except Exception as e:
-            print(f"Error en loop (Ricardo): {e}")
-        try:
-            await scrape_facebook_marketplace()
-        except Exception as e:
-            print(f"Error en loop (Facebook): {e}")
-        global _next_scrape
+        await run_all_scrapers()
         _next_scrape = datetime.now().timestamp() + 3600
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Esperando 1 hora...")
-        await asyncio.sleep(3600)
+
+        # Wait up to 1 hour, but wake immediately if _force_scrape is set
+        deadline = datetime.now().timestamp() + 3600
+        while datetime.now().timestamp() < deadline:
+            if _force_scrape:
+                _force_scrape = False
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Scrape manual forzado")
+                antes = len(seen_ads)
+                await run_all_scrapers()
+                _next_scrape = datetime.now().timestamp() + 3600
+                nuevos = len(seen_ads) - antes
+                if nuevos > 0:
+                    await enviar_alerta(f"✅ Scrape completado — {nuevos} artículo{'s' if nuevos > 1 else ''} nuevo{'s' if nuevos > 1 else ''} encontrado{'s' if nuevos > 1 else ''}.")
+                else:
+                    await enviar_alerta("✅ Scrape completado — sin artículos nuevos.")
+            await asyncio.sleep(5)
 
 async def main() -> None:
     print("🤖 Bot PS5 Alert arrancando...")

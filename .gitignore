@@ -11,4 +11,5 @@ bot_*.log
 debug*.py
 test_*.py
 next_search.json
+seen_ads.json
 .claude/
